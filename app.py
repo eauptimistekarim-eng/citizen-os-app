@@ -16,11 +16,11 @@ client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 st.title("CitizenOS - Assistant Administratif IA")
 
 st.markdown("""
-### Assistant intelligent administratif
+### Assistant administratif intelligent
 
-Analyse de situations (CAF, DALO, Préfecture, recours).
+Analyse de situations : CAF, DALO, Préfecture, recours.
 
-⚠️ Outil d’aide à la compréhension, pas un avocat.
+⚠️ Outil d’aide, pas un avocat.
 """)
 
 # =====================
@@ -33,9 +33,9 @@ if st.query_params.get("success"):
     session_id = st.query_params.get("session_id")
 
     if session_id:
-        file_url = f"{BACKEND_URL}/download/{session_id}"
-
         st.markdown("### 📄 Votre document est prêt")
+
+        file_url = f"{BACKEND_URL}/download/{session_id}"
         st.markdown(f"[📥 Télécharger votre lettre]({file_url})")
 
     st.stop()
@@ -96,7 +96,7 @@ if user_input:
     st.rerun()
 
 # =====================
-# CONVERSION BLOCK
+# CONVERSION BLOCK (SAFE)
 # =====================
 if st.session_state.unlock:
 
@@ -115,13 +115,25 @@ if st.session_state.unlock:
             f"{BACKEND_URL}/create-checkout-session",
             json={
                 "messages": st.session_state.messages[-6:],
-                "summary": st.session_state.messages[-1][1]
+                "summary": st.session_state.messages[-1][1] if st.session_state.messages else ""
             }
         )
 
-        data = res.json()
+        # 🔥 FIX CRASH JSON
+        try:
+            data = res.json()
+        except Exception:
+            st.error("Erreur backend (réponse invalide)")
+            st.write(res.text)
+            st.stop()
+
+        # 🔥 CHECK STATUS
+        if res.status_code != 200:
+            st.error("Erreur serveur backend")
+            st.write(data)
+            st.stop()
 
         if "url" in data:
-            st.markdown(f"[👉 Payer maintenant]({data['url']})")
+            st.markdown(f"[👉 Accéder au paiement]({data['url']})")
         else:
             st.error(data)
