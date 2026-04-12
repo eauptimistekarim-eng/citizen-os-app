@@ -22,13 +22,14 @@ def home():
     return "CitizenOS backend OK"
 
 # =====================
-# CHECKOUT
+# CREATE CHECKOUT SESSION
 # =====================
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout():
 
     data = request.json or {}
-    situation = data.get("messages", "")[:500]
+    messages = data.get("messages", [])
+    summary = data.get("summary", "")
 
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
@@ -48,56 +49,56 @@ def create_checkout():
         cancel_url=f"{FRONTEND_URL}?cancel=true",
 
         metadata={
-            "situation": situation
+            "summary": summary[:500]
         }
     )
 
     return jsonify({"url": session.url})
 
 # =====================
-# PDF EN MÉMOIRE (IMPORTANT)
+# PDF GENERATION (IN MEMORY)
 # =====================
-def generate_pdf_buffer(situation):
+def generate_pdf_buffer(text):
 
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer)
 
     pdf.setFont("Helvetica-Bold", 14)
-    pdf.drawString(50, 800, "LETTRE ADMINISTRATIVE")
+    pdf.drawString(50, 800, "LETTRE ADMINISTRATIVE - CITIZENOS")
 
     pdf.setFont("Helvetica", 11)
 
-    text = pdf.beginText(50, 750)
-    text.textLines("Situation :")
-    text.textLines(situation[:1200])
+    text_obj = pdf.beginText(50, 750)
+    text_obj.textLines("Situation :")
+    text_obj.textLines(text[:1200])
 
-    text.textLines("\n\nAnalyse :")
-    text.textLines("Votre dossier nécessite une structuration administrative et une action adaptée.")
+    text_obj.textLines("\nAnalyse :")
+    text_obj.textLines("Votre situation nécessite une structuration administrative.")
 
-    text.textLines("\n\nLettre :")
-    text.textLines(
+    text_obj.textLines("\nLettre :")
+    text_obj.textLines(
         "Madame, Monsieur,\n\n"
-        "Je vous contacte concernant ma situation administrative.\n"
-        "Je sollicite une révision de mon dossier dans les meilleurs délais.\n\n"
+        "Je vous adresse ce courrier concernant ma situation administrative.\n"
+        "Je sollicite une réévaluation de mon dossier.\n\n"
         "Cordialement."
     )
 
-    pdf.drawText(text)
+    pdf.drawText(text_obj)
     pdf.save()
 
     buffer.seek(0)
     return buffer
 
 # =====================
-# DOWNLOAD PDF
+# DOWNLOAD
 # =====================
 @app.route("/download/<session_id>")
 def download(session_id):
 
     session = stripe.checkout.Session.retrieve(session_id)
-    situation = session["metadata"].get("situation", "")
+    summary = session["metadata"].get("summary", "")
 
-    pdf_buffer = generate_pdf_buffer(situation)
+    pdf_buffer = generate_pdf_buffer(summary)
 
     return send_file(
         pdf_buffer,
@@ -110,4 +111,4 @@ def download(session_id):
 # RUN
 # =====================
 if __name__ == "__main__":
-    app.run(port=5001)
+    app.run(host="0.0.0.0", port=5001)
