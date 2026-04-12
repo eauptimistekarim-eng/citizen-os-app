@@ -8,20 +8,19 @@ from groq import Groq
 st.set_page_config(page_title="CitizenOS", page_icon="⚖️")
 
 BACKEND_URL = st.secrets["BACKEND_URL"]
-
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 # =====================
-# TITRE + POSITIONNEMENT
+# TITLE
 # =====================
 st.title("CitizenOS - Assistant Administratif IA")
 
 st.markdown("""
-### Analyse intelligente de situations administratives
+### Assistant intelligent de structuration administrative
 
-Cet outil vous aide à structurer une situation (CAF, DALO, préfecture, recours…).
+Cet outil analyse votre situation (CAF, DALO, préfecture, recours) et vous aide à comprendre vos options.
 
-⚠️ Ce n’est pas un avocat, mais une aide à la compréhension et à la rédaction.
+⚠️ Ceci n’est pas un avocat, mais un outil d’aide à la rédaction et à la compréhension.
 """)
 
 # =====================
@@ -31,15 +30,14 @@ if st.query_params.get("success"):
 
     st.success("✔ Paiement confirmé")
 
-    st.subheader("📄 Votre document est prêt")
+    session_id = st.query_params.get("session_id")
 
-    session_id = st.query_params.get("email", "client")
-
-    file_url = f"{BACKEND_URL}/download/COURRIER_{session_id}.pdf"
-
-    st.info("Téléchargement en cours...")
-
-    st.markdown(f"[📥 Télécharger le document]({file_url})")
+    if session_id:
+        file_url = f"{BACKEND_URL}/download/COURRIER_{session_id}.pdf"
+        st.markdown(f"### 📄 Votre document est prêt")
+        st.markdown(f"[📥 Télécharger votre lettre]({file_url})")
+    else:
+        st.warning("Document en cours de génération... rafraîchissez dans quelques secondes")
 
     st.stop()
 
@@ -49,12 +47,16 @@ if st.query_params.get("success"):
 SYSTEM_PROMPT = """
 Tu es un assistant administratif expert.
 
-Tu dois :
+Objectif :
 - poser une question à la fois
-- reformuler la situation
+- reformuler clairement
 - guider progressivement
-- créer un besoin de document
-- garder un style court, précis, type machine à écrire
+- créer un besoin de document administratif
+
+Style :
+- machine à écrire
+- court
+- précis
 """
 
 def chat(messages):
@@ -76,15 +78,12 @@ if "unlock" not in st.session_state:
     st.session_state.unlock = False
 
 # =====================
-# CHAT DISPLAY
+# CHAT
 # =====================
 for role, msg in st.session_state.messages:
     with st.chat_message(role):
         st.write(msg)
 
-# =====================
-# INPUT
-# =====================
 user_input = st.chat_input("Décrivez votre situation...")
 
 if user_input:
@@ -100,29 +99,23 @@ if user_input:
     st.rerun()
 
 # =====================
-# CONVERSION BLOCK
+# CONVERSION
 # =====================
 if st.session_state.unlock:
 
     st.divider()
-    st.subheader("📄 Analyse complète disponible")
+    st.subheader("📄 Génération de document")
 
     st.markdown("""
-👉 Génération d’une lettre administrative personnalisée :
-
-- CAF
-- DALO
-- Préfecture
-- Recours officiel
-
-⏱ instantané
-💰 9€
+✔ Lettre administrative personnalisée  
+✔ CAF / DALO / Préfecture / Recours  
+✔ Format prêt à envoyer  
 """)
 
     if st.button("Générer mon document (9€)"):
 
         payload = {
-            "situation": str(st.session_state.messages)[-400:]
+            "messages": str(st.session_state.messages)[-500:]
         }
 
         res = requests.post(
