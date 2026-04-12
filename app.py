@@ -12,41 +12,34 @@ BACKEND_URL = st.secrets["BACKEND_URL"]
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 # =====================
-# TITLE
+# TITRE + POSITIONNEMENT
 # =====================
-st.title("CitizenOS - Analyse Administrative IA")
+st.title("CitizenOS - Assistant Administratif IA")
 
 st.markdown("""
-### Assistant d’analyse et de structuration administrative
+### Analyse intelligente de situations administratives
 
-Cet outil vous aide à comprendre une situation administrative complexe  
-et à générer un document adapté (CAF, DALO, préfecture, recours).
+Cet outil vous aide à structurer une situation (CAF, DALO, préfecture, recours…).
 
-⚠️ Il ne remplace pas un avocat, mais vous guide avec une logique professionnelle.
+⚠️ Ce n’est pas un avocat, mais une aide à la compréhension et à la rédaction.
 """)
 
 # =====================
 # SUCCESS PAGE
 # =====================
-query_params = st.query_params
+if st.query_params.get("success"):
 
-if "success" in query_params:
-
-    st.success("✅ Paiement confirmé")
+    st.success("✔ Paiement confirmé")
 
     st.subheader("📄 Votre document est prêt")
 
-    email = query_params.get("email", "client")
+    session_id = st.query_params.get("email", "client")
 
-    file_url = f"{BACKEND_URL}/download/COURRIER_{email}.pdf"
+    file_url = f"{BACKEND_URL}/download/COURRIER_{session_id}.pdf"
 
-    st.info("Téléchargement automatique en cours...")
+    st.info("Téléchargement en cours...")
 
-    st.markdown(f"""
-        <meta http-equiv="refresh" content="2;url={file_url}">
-    """, unsafe_allow_html=True)
-
-    st.markdown(f"[📥 Télécharger manuellement]({file_url})")
+    st.markdown(f"[📥 Télécharger le document]({file_url})")
 
     st.stop()
 
@@ -54,40 +47,27 @@ if "success" in query_params:
 # IA PROMPT
 # =====================
 SYSTEM_PROMPT = """
-Tu es un expert administratif français.
+Tu es un assistant administratif expert.
 
-OBJECTIF :
-- comprendre une situation administrative
-- poser UNE question à la fois
-- reformuler régulièrement
-- structurer progressivement le problème
-- détecter le niveau d'urgence
-- préparer une stratégie
-
-STYLE :
-- phrases courtes
-- ton professionnel
-- clair
-- effet "machine à écrire"
-
-IMPORTANT :
-- ne donne pas la solution complète
-- crée un besoin de document
+Tu dois :
+- poser une question à la fois
+- reformuler la situation
+- guider progressivement
+- créer un besoin de document
+- garder un style court, précis, type machine à écrire
 """
 
 def chat(messages):
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            *[{"role": r, "content": m} for r, m in messages]
-        ],
+        messages=[{"role": "system", "content": SYSTEM_PROMPT}] +
+                 [{"role": r, "content": m} for r, m in messages],
         temperature=0.3
     )
     return completion.choices[0].message.content
 
 # =====================
-# SESSION STATE
+# STATE
 # =====================
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -114,7 +94,6 @@ if user_input:
 
     st.session_state.messages.append(("assistant", reply))
 
-    # 🔥 Déblocage conversion après 4 messages user
     if len([m for m in st.session_state.messages if m[0] == "user"]) >= 4:
         st.session_state.unlock = True
 
@@ -129,31 +108,31 @@ if st.session_state.unlock:
     st.subheader("📄 Analyse complète disponible")
 
     st.markdown("""
-Votre situation a été analysée.
+👉 Génération d’une lettre administrative personnalisée :
 
-👉 Vous pouvez maintenant obtenir :
+- CAF
+- DALO
+- Préfecture
+- Recours officiel
 
-- une **lettre administrative personnalisée**
-- prête à envoyer immédiatement
-- rédigée dans un format professionnel
-- adaptée à votre cas précis (CAF, DALO, préfecture…)
-
-⏱️ Temps : immédiat  
-💰 Prix : 9€
+⏱ instantané
+💰 9€
 """)
 
     if st.button("Générer mon document (9€)"):
 
-        situation = str(st.session_state.messages)[-400:]  # 🔥 limite Stripe
+        payload = {
+            "situation": str(st.session_state.messages)[-400:]
+        }
 
-        response = requests.post(
+        res = requests.post(
             f"{BACKEND_URL}/create-checkout-session",
-            json={"situation": situation}
+            json=payload
         )
 
-        data = response.json()
+        data = res.json()
 
         if "url" in data:
-            st.markdown(f"[👉 Accéder au paiement]({data['url']})")
+            st.markdown(f"[👉 Payer maintenant]({data['url']})")
         else:
             st.error(data)
