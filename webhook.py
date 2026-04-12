@@ -1,8 +1,8 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_file
 import stripe
 import os
-from reportlab.platypus import SimpleDocTemplate, Paragraph
-from reportlab.lib.styles import getSampleStyleSheet
+import io
+from reportlab.pdfgen import canvas
 
 app = Flask(__name__)
 
@@ -55,68 +55,56 @@ def create_checkout():
     return jsonify({"url": session.url})
 
 # =====================
-# PDF GENERATION
+# PDF EN MÉMOIRE (IMPORTANT)
 # =====================
-def generate_pdf(filename, situation):
+def generate_pdf_buffer(situation):
 
-    doc = SimpleDocTemplate(filename)
-    styles = getSampleStyleSheet()
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer)
 
-    content = [
-        Paragraph("LETTRE ADMINISTRATIVE", styles["Title"]),
-        Paragraph("Situation :", styles["Heading2"]),
-        Paragraph(situation, styles["Normal"]),
-        Paragraph("Analyse :", styles["Heading2"]),
-        Paragraph("Votre dossier nécessite une structuration administrative claire.", styles["Normal"]),
-        Paragraph("Lettre :", styles["Heading2"]),
-        Paragraph(
-            "Madame, Monsieur,<br/><br/>"
-            "Je vous contacte concernant ma situation administrative.<br/><br/>"
-            "Je sollicite une révision de mon dossier dans les meilleurs délais.<br/><br/>"
-            "Cordialement.",
-            styles["Normal"]
-        )
-    ]
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.drawString(50, 800, "LETTRE ADMINISTRATIVE")
 
-    doc.build(content)
+    pdf.setFont("Helvetica", 11)
 
-# =====================
-# WEBHOOK STRIPE
-# =====================
-@app.route("/webhook", methods=["POST"])
-def webhook():
+    text = pdf.beginText(50, 750)
+    text.textLines("Situation :")
+    text.textLines(situation[:1200])
 
-    payload = request.data
-    sig_header = request.headers.get("Stripe-Signature")
+    text.textLines("\n\nAnalyse :")
+    text.textLines("Votre dossier nécessite une structuration administrative et une action adaptée.")
 
-    try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, endpoint_secret
-        )
-    except Exception:
-        return "", 400
+    text.textLines("\n\nLettre :")
+    text.textLines(
+        "Madame, Monsieur,\n\n"
+        "Je vous contacte concernant ma situation administrative.\n"
+        "Je sollicite une révision de mon dossier dans les meilleurs délais.\n\n"
+        "Cordialement."
+    )
 
-    if event["type"] == "checkout.session.completed":
+    pdf.drawText(text)
+    pdf.save()
 
-        session = event["data"]["object"]
-
-        session_id = session["id"]
-        situation = session["metadata"].get("situation", "")
-
-        filename = f"COURRIER_{session_id}.pdf"
-
-        generate_pdf(filename, situation)
-
-        print("✔ PDF généré :", filename)
-
-    return "", 200
+    buffer.seek(0)
+    return buffer
 
 # =====================
-# DOWNLOAD
+# DOWNLOAD PDF
 # =====================
-@app.route("/download/<filename>")
-def download(filename):
-    return send_from_directory(".", filename, as_attachment=True)
+@app.route("/download/<session_id>")
+def download(session_id):
+
+    session = stripe.checkout.Session.retrieve(session_id)
+    situation = session["metadata"].get("situation", "")
+
+    pdf_buffer = generate_pdf_buffer(situation)
+
+    return send_file(
+        pdf_buffer,
+        as_attachment=True,
+        download_name="citizenos_lettre.pdf",
+        mimetype="application/pdf"
+    )
 
 # =====================
 # RUN
