@@ -16,11 +16,11 @@ client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 st.title("CitizenOS - Assistant Administratif IA")
 
 st.markdown("""
-### Assistant intelligent de structuration administrative
+### Assistant intelligent administratif
 
-Cet outil analyse votre situation (CAF, DALO, préfecture, recours) et vous aide à comprendre vos options.
+Analyse de situations (CAF, DALO, Préfecture, recours).
 
-⚠️ Ceci n’est pas un avocat, mais un outil d’aide à la rédaction et à la compréhension.
+⚠️ Outil d’aide à la compréhension, pas un avocat.
 """)
 
 # =====================
@@ -33,11 +33,10 @@ if st.query_params.get("success"):
     session_id = st.query_params.get("session_id")
 
     if session_id:
-        file_url = f"{BACKEND_URL}/download/COURRIER_{session_id}.pdf"
-        st.markdown(f"### 📄 Votre document est prêt")
+        file_url = f"{BACKEND_URL}/download/{session_id}"
+
+        st.markdown("### 📄 Votre document est prêt")
         st.markdown(f"[📥 Télécharger votre lettre]({file_url})")
-    else:
-        st.warning("Document en cours de génération... rafraîchissez dans quelques secondes")
 
     st.stop()
 
@@ -47,16 +46,14 @@ if st.query_params.get("success"):
 SYSTEM_PROMPT = """
 Tu es un assistant administratif expert.
 
-Objectif :
-- poser une question à la fois
-- reformuler clairement
-- guider progressivement
-- créer un besoin de document administratif
+Tu fais :
+- une question à la fois
+- reformulation
+- compréhension progressive
+- style machine à écrire
+- tu crées un besoin de document sans tout donner
 
-Style :
-- machine à écrire
-- court
-- précis
+Ne sois jamais trop long.
 """
 
 def chat(messages):
@@ -104,23 +101,19 @@ if user_input:
 if st.session_state.unlock:
 
     st.divider()
-    st.subheader("📄 Génération de document")
+    st.subheader("📄 Analyse complète")
 
     st.markdown("""
 ✔ Lettre administrative personnalisée  
 ✔ CAF / DALO / Préfecture / Recours  
-✔ Format prêt à envoyer  
+✔ Document prêt à envoyer  
 """)
 
     if st.button("Générer mon document (9€)"):
 
-        payload = {
-            "messages": str(st.session_state.messages)[-500:]
-        }
-
         res = requests.post(
             f"{BACKEND_URL}/create-checkout-session",
-            json=payload
+            json={"messages": str(st.session_state.messages)}
         )
 
         data = res.json()
