@@ -15,78 +15,83 @@ endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
 FRONTEND_URL = "https://citizen-os-app.streamlit.app"
 
 # =====================
-# HOME
+# HEALTH CHECK
 # =====================
 @app.route("/")
 def home():
-    return "CitizenOS backend OK"
+    return jsonify({"status": "ok", "service": "CitizenOS backend"})
 
 # =====================
-# CREATE CHECKOUT SESSION
+# CREATE CHECKOUT
 # =====================
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout():
 
-    data = request.json or {}
-    messages = data.get("messages", [])
-    summary = data.get("summary", "")
+    try:
+        data = request.json or {}
+        messages = data.get("messages", [])
+        summary = data.get("summary", "")
 
-    session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
-        line_items=[{
-            "price_data": {
-                "currency": "eur",
-                "product_data": {
-                    "name": "CitizenOS - Lettre administrative IA"
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            mode="payment",
+            line_items=[{
+                "price_data": {
+                    "currency": "eur",
+                    "product_data": {
+                        "name": "CitizenOS - Lettre administrative IA"
+                    },
+                    "unit_amount": 900
                 },
-                "unit_amount": 900
-            },
-            "quantity": 1
-        }],
-        mode="payment",
+                "quantity": 1
+            }],
 
-        success_url=f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{FRONTEND_URL}?cancel=true",
+            success_url=f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{FRONTEND_URL}?cancel=true",
 
-        metadata={
-            "summary": summary[:500]
-        }
-    )
+            metadata={
+                "summary": str(summary)[:450]
+            }
+        )
 
-    return jsonify({"url": session.url})
+        return jsonify({"url": session.url})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # =====================
-# PDF GENERATION (IN MEMORY)
+# PDF GENERATION
 # =====================
-def generate_pdf_buffer(text):
+def generate_pdf(text):
 
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer)
 
     pdf.setFont("Helvetica-Bold", 14)
-    pdf.drawString(50, 800, "LETTRE ADMINISTRATIVE - CITIZENOS")
+    pdf.drawString(50, 800, "CITIZENOS - LETTRE ADMINISTRATIVE")
 
     pdf.setFont("Helvetica", 11)
 
-    text_obj = pdf.beginText(50, 750)
-    text_obj.textLines("Situation :")
-    text_obj.textLines(text[:1200])
+    y = 760
 
-    text_obj.textLines("\nAnalyse :")
-    text_obj.textLines("Votre situation nécessite une structuration administrative.")
+    pdf.drawString(50, y, "SITUATION :")
+    y -= 20
 
-    text_obj.textLines("\nLettre :")
-    text_obj.textLines(
-        "Madame, Monsieur,\n\n"
-        "Je vous adresse ce courrier concernant ma situation administrative.\n"
-        "Je sollicite une réévaluation de mon dossier.\n\n"
-        "Cordialement."
-    )
+    for line in str(text)[:1200].split("\n"):
+        pdf.drawString(50, y, line[:90])
+        y -= 15
+        if y < 50:
+            break
 
-    pdf.drawText(text_obj)
+    y -= 20
+    pdf.drawString(50, y, "CONCLUSION :")
+    y -= 20
+
+    pdf.drawString(50, y, "Document généré automatiquement par CitizenOS.")
+
     pdf.save()
-
     buffer.seek(0)
+
     return buffer
 
 # =====================
@@ -95,20 +100,22 @@ def generate_pdf_buffer(text):
 @app.route("/download/<session_id>")
 def download(session_id):
 
-    session = stripe.checkout.Session.retrieve(session_id)
-    summary = session["metadata"].get("summary", "")
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+        summary = session.get("metadata", {}).get("summary", "")
 
-    pdf_buffer = generate_pdf_buffer(summary)
+        pdf = generate_pdf(summary)
 
-    return send_file(
-        pdf_buffer,
-        as_attachment=True,
-        download_name="citizenos_lettre.pdf",
-        mimetype="application/pdf"
-    )
+        return send_file(
+            pdf,
+            as_attachment=True,
+            download_name="citizenos_lettre.pdf",
+            mimetype="application/pdf"
+        )
 
-# =====================
-# RUN
-# =====================
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
