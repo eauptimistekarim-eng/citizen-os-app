@@ -1,25 +1,26 @@
 from flask import Flask, request, jsonify, send_file
 import stripe
 import os
-import io
+import uuid
 from reportlab.pdfgen import canvas
 
 app = Flask(__name__)
 
-# =====================
-# CONFIG
-# =====================
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 FRONTEND_URL = "https://citizen-os-app.streamlit.app"
 
 # =====================
-# HEALTH CHECK
+# STORAGE MEMORY SIMPLE
+# =====================
+PDF_STORAGE = {}
+
+# =====================
+# HOME
 # =====================
 @app.route("/")
 def home():
-    return jsonify({"status": "ok", "service": "CitizenOS backend"})
+    return jsonify({"status": "ok"})
 
 # =====================
 # CREATE CHECKOUT
@@ -27,95 +28,83 @@ def home():
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout():
 
-    try:
-        data = request.json or {}
-        messages = data.get("messages", [])
-        summary = data.get("summary", "")
+    data = request.json or {}
+    summary = data.get("summary", "")
 
-        session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            mode="payment",
-            line_items=[{
-                "price_data": {
-                    "currency": "eur",
-                    "product_data": {
-                        "name": "CitizenOS - Lettre administrative IA"
-                    },
-                    "unit_amount": 900
+    session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        mode="payment",
+        line_items=[{
+            "price_data": {
+                "currency": "eur",
+                "product_data": {
+                    "name": "CitizenOS - Lettre administrative IA"
                 },
-                "quantity": 1
-            }],
+                "unit_amount": 900
+            },
+            "quantity": 1
+        }],
 
-            success_url=f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{FRONTEND_URL}?cancel=true",
+        success_url=f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{FRONTEND_URL}?cancel=true",
 
-            metadata={
-                "summary": str(summary)[:450]
-            }
-        )
+        metadata={
+            "summary": summary[:500]
+        }
+    )
 
-        return jsonify({"url": session.url})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# =====================
-# PDF GENERATION
-# =====================
-def generate_pdf(text):
-
-    buffer = io.BytesIO()
-    pdf = canvas.Canvas(buffer)
-
-    pdf.setFont("Helvetica-Bold", 14)
-    pdf.drawString(50, 800, "CITIZENOS - LETTRE ADMINISTRATIVE")
-
-    pdf.setFont("Helvetica", 11)
-
-    y = 760
-
-    pdf.drawString(50, y, "SITUATION :")
-    y -= 20
-
-    for line in str(text)[:1200].split("\n"):
-        pdf.drawString(50, y, line[:90])
-        y -= 15
-        if y < 50:
-            break
-
-    y -= 20
-    pdf.drawString(50, y, "CONCLUSION :")
-    y -= 20
-
-    pdf.drawString(50, y, "Document généré automatiquement par CitizenOS.")
-
-    pdf.save()
-    buffer.seek(0)
-
-    return buffer
+    return jsonify({"url": session.url})
 
 # =====================
-# DOWNLOAD
+# WEBHOOK STRIPE (IMPORTANT)
+# =====================
+@app.route("/webhook", methods=["POST"])
+def webhook():
+
+    payload = request.data
+    event = stripe.Event.construct_from(
+        stripe.json.loads(payload), stripe.api_key
+    )
+
+    if event["type"] == "checkout.session.completed":
+
+        session = event["data"]["object"]
+
+        session_id = session["id"]
+        summary = session.get("metadata", {}).get("summary", "")
+
+        file_id = str(uuid.uuid4())
+        file_path = f"/tmp/{file_id}.pdf"
+
+        pdf = canvas.Canvas(file_path)
+        pdf.drawString(50, 800, "CITIZENOS - LETTRE ADMINISTRATIVE")
+        pdf.drawString(50, 750, summary[:1000])
+        pdf.save()
+
+        PDF_STORAGE[session_id] = file_path
+
+    return "", 200
+
+# =====================
+# DOWNLOAD STABLE
 # =====================
 @app.route("/download/<session_id>")
 def download(session_id):
 
-    try:
-        session = stripe.checkout.Session.retrieve(session_id)
-        summary = session.get("metadata", {}).get("summary", "")
+    file_path = PDF_STORAGE.get(session_id)
 
-        pdf = generate_pdf(summary)
+    if not file_path:
+        return jsonify({
+            "error": "file_not_ready",
+            "message": "Document pas encore généré"
+        }), 404
 
-        return send_file(
-            pdf,
-            as_attachment=True,
-            download_name="citizenos_lettre.pdf",
-            mimetype="application/pdf"
-        )
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+    return send_file(
+        file_path,
+        as_attachment=True,
+        download_name="citizenos_lettre.pdf",
+        mimetype="application/pdf"
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
