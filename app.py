@@ -5,10 +5,11 @@ from groq import Groq
 # =====================
 # CONFIG
 # =====================
+st.set_page_config(page_title="CitizenOS", page_icon="⚖️")
+
 BACKEND_URL = st.secrets["BACKEND_URL"]
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-st.set_page_config(page_title="CitizenOS", page_icon="⚖️")
 st.title("CitizenOS - Assistant Administratif IA")
 
 st.markdown("""
@@ -28,20 +29,21 @@ if st.query_params.get("success"):
     st.success("✔ Paiement confirmé")
 
     if session_id:
-        file_url = f"{BACKEND_URL}/download/{session_id}"
         st.markdown("### 📄 Votre document est prêt")
+
+        file_url = f"{BACKEND_URL}/download/{session_id}"
         st.markdown(f"[📥 Télécharger votre lettre]({file_url})")
 
     st.stop()
 
 # =====================
-# STATE INIT
+# STATE
 # =====================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # =====================
-# DISPLAY CHAT (IMPORTANT FIX)
+# CHAT DISPLAY
 # =====================
 for role, msg in st.session_state.messages:
     with st.chat_message(role):
@@ -54,7 +56,7 @@ def ask_ai(messages):
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
-            {"role": "system", "content": "Tu es un assistant administratif expert, tu poses une question à la fois."},
+            {"role": "system", "content": "Assistant administratif expert. Pose une question à la fois."},
             *[{"role": r, "content": m} for r, m in messages]
         ],
         temperature=0.3
@@ -82,7 +84,13 @@ if user_input:
 if len([m for m in st.session_state.messages if m[0] == "user"]) >= 3:
 
     st.divider()
-    st.subheader("📄 Analyse complète disponible")
+    st.subheader("📄 Génération de document")
+
+    st.markdown("""
+✔ Lettre administrative personnalisée  
+✔ CAF / DALO / Préfecture / Recours  
+✔ Document prêt à envoyer  
+""")
 
     if st.button("Générer mon document (9€)"):
 
@@ -93,7 +101,12 @@ if len([m for m in st.session_state.messages if m[0] == "user"]) >= 3:
             }
         )
 
-        data = res.json()
+        try:
+            data = res.json()
+        except:
+            st.error("Erreur backend")
+            st.write(res.text)
+            st.stop()
 
         if "url" in data:
             st.markdown(f"[👉 Payer maintenant]({data['url']})")
