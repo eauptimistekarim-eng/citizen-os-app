@@ -46,14 +46,14 @@ if st.query_params.get("success"):
 SYSTEM_PROMPT = """
 Tu es un assistant administratif expert.
 
-Tu fais :
+Tu fonctionnes comme un entretien :
 - une question à la fois
 - reformulation
-- compréhension progressive
 - style machine à écrire
-- tu crées un besoin de document sans tout donner
+- progression lente
+- création d’un besoin de document
 
-Ne sois jamais trop long.
+Ne donne jamais la solution complète trop tôt.
 """
 
 def chat(messages):
@@ -75,7 +75,7 @@ if "unlock" not in st.session_state:
     st.session_state.unlock = False
 
 # =====================
-# CHAT
+# CHAT UI
 # =====================
 for role, msg in st.session_state.messages:
     with st.chat_message(role):
@@ -96,12 +96,12 @@ if user_input:
     st.rerun()
 
 # =====================
-# CONVERSION
+# CONVERSION BLOCK
 # =====================
 if st.session_state.unlock:
 
     st.divider()
-    st.subheader("📄 Analyse complète")
+    st.subheader("📄 Analyse complète disponible")
 
     st.markdown("""
 ✔ Lettre administrative personnalisée  
@@ -113,7 +113,10 @@ if st.session_state.unlock:
 
         res = requests.post(
             f"{BACKEND_URL}/create-checkout-session",
-            json={"messages": str(st.session_state.messages)}
+            json={
+                "messages": st.session_state.messages[-6:],
+                "summary": st.session_state.messages[-1][1]
+            }
         )
 
         data = res.json()
