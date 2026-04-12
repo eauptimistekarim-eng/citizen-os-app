@@ -22,13 +22,13 @@ def home():
     return "CitizenOS backend OK"
 
 # =====================
-# CREATE CHECKOUT
+# CHECKOUT
 # =====================
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout():
 
     data = request.json or {}
-    situation = data.get("situation", "")[:400]
+    situation = data.get("messages", "")[:500]
 
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
@@ -36,7 +36,7 @@ def create_checkout():
             "price_data": {
                 "currency": "eur",
                 "product_data": {
-                    "name": "Consultation administrative IA"
+                    "name": "CitizenOS - Lettre administrative IA"
                 },
                 "unit_amount": 900
             },
@@ -44,14 +44,15 @@ def create_checkout():
         }],
         mode="payment",
 
-        success_url=f"{FRONTEND_URL}?success=true&email={{CHECKOUT_SESSION_ID}}",
+        success_url=f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{FRONTEND_URL}?cancel=true",
 
-        metadata={"situation": situation}
+        metadata={
+            "situation": situation
+        }
     )
 
     return jsonify({"url": session.url})
-
 
 # =====================
 # PDF GENERATION
@@ -62,23 +63,22 @@ def generate_pdf(filename, situation):
     styles = getSampleStyleSheet()
 
     content = [
-        Paragraph("CONSULTATION ADMINISTRATIVE", styles["Title"]),
+        Paragraph("LETTRE ADMINISTRATIVE", styles["Title"]),
         Paragraph("Situation :", styles["Heading2"]),
         Paragraph(situation, styles["Normal"]),
         Paragraph("Analyse :", styles["Heading2"]),
-        Paragraph("Votre situation nécessite une action administrative structurée.", styles["Normal"]),
+        Paragraph("Votre dossier nécessite une structuration administrative claire.", styles["Normal"]),
         Paragraph("Lettre :", styles["Heading2"]),
         Paragraph(
             "Madame, Monsieur,<br/><br/>"
             "Je vous contacte concernant ma situation administrative.<br/><br/>"
-            "Je sollicite un traitement rapide de mon dossier.<br/><br/>"
+            "Je sollicite une révision de mon dossier dans les meilleurs délais.<br/><br/>"
             "Cordialement.",
             styles["Normal"]
         )
     ]
 
     doc.build(content)
-
 
 # =====================
 # WEBHOOK STRIPE
@@ -100,8 +100,8 @@ def webhook():
 
         session = event["data"]["object"]
 
-        situation = session["metadata"].get("situation", "")
         session_id = session["id"]
+        situation = session["metadata"].get("situation", "")
 
         filename = f"COURRIER_{session_id}.pdf"
 
@@ -111,14 +111,12 @@ def webhook():
 
     return "", 200
 
-
 # =====================
 # DOWNLOAD
 # =====================
 @app.route("/download/<filename>")
 def download(filename):
     return send_from_directory(".", filename, as_attachment=True)
-
 
 # =====================
 # RUN
