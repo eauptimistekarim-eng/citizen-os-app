@@ -7,13 +7,11 @@ from reportlab.lib.pagesizes import A4
 from groq import Groq
 
 # --- CONFIGURATION ---
-# On récupère les secrets configurés dans l'interface Streamlit Cloud
 BACKEND_URL = st.secrets["BACKEND_URL"]
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 client = Groq(api_key=GROQ_API_KEY)
 
 def create_pdf(text_content):
-    """Génère un fichier PDF à partir du texte fourni."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     text = c.beginText(50, 800)
@@ -26,7 +24,6 @@ def create_pdf(text_content):
     return buffer.getvalue()
 
 def typewriter_effect(text, delay=0.02):
-    """Affiche un texte avec un effet machine à écrire."""
     placeholder = st.empty()
     full_text = ""
     for char in text:
@@ -39,9 +36,12 @@ def typewriter_effect(text, delay=0.02):
 st.set_page_config(page_title="CitizenOS", page_icon="⚖️")
 st.title("CitizenOS ⚖️")
 
-# Présentation en mode machine à écrire
-intro_text = "Votre assistant juridique intelligent pour la rédaction de documents officiels et la résolution de litiges."
-typewriter_effect(intro_text)
+if "intro_done" not in st.session_state:
+    typewriter_effect("Votre assistant juridique intelligent pour la rédaction de documents officiels.")
+    st.session_state.intro_done = True
+else:
+    st.markdown("Votre assistant juridique intelligent pour la rédaction de documents officiels.")
+
 st.divider()
 
 # --- INITIALISATION ---
@@ -50,74 +50,54 @@ if "messages" not in st.session_state:
 if "ready_for_payment" not in st.session_state:
     st.session_state.ready_for_payment = False
 
-# --- GESTION DU RETOUR DE PAIEMENT STRIPE ---
-# Si un session_id est présent dans l'URL, le paiement a réussi
+# --- RETOUR DE PAIEMENT ---
 params = st.query_params
 if "session_id" in params:
-    st.success("✅ Paiement validé ! Votre document est prêt.")
-    with st.spinner("Récupération du contenu final..."):
-        try:
-            r = requests.get(f"{BACKEND_URL}/get-doc/{params['session_id']}")
-            if r.status_code == 200:
-                pdf_data = create_pdf(r.json()['content'])
-                st.download_button(
-                    label="📥 Télécharger mon document PDF",
-                    data=pdf_data,
-                    file_name="document_citizenos.pdf",
-                    mime="application/pdf"
-                )
-            else:
-                st.error("Document introuvable sur le serveur.")
-        except Exception as e:
-            st.error(f"Erreur de connexion : {e}")
-    st.divider()
+    st.success("✅ Paiement test validé !")
+    try:
+        r = requests.get(f"{BACKEND_URL}/get-doc/{params['session_id']}")
+        if r.status_code == 200:
+            pdf_data = create_pdf(r.json()['content'])
+            st.download_button("📥 Télécharger mon PDF", pdf_data, "document.pdf", "application/pdf")
+    except Exception as e:
+        st.error(f"Erreur : {e}")
 
-# --- AFFICHAGE DE L'HISTORIQUE ---
+# --- AFFICHAGE CHAT ---
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-# --- CHATBOT (LOGIQUE D'ENTONNOIR) ---
-if prompt := st.chat_input("Décrivez votre situation ici..."):
+# --- CHATBOT ---
+if prompt := st.chat_input("Décrivez votre situation..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    with st.chat_message("user"): st.markdown(prompt)
 
     with st.chat_message("assistant"):
         try:
-            # Prompt système pour forcer l'IA à poser des questions
-            system_instruction = """Tu es l'expert CitizenOS. 
-            Étape 1 : Pose des questions courtes et pertinentes une par une (entonnoir).
-            Étape 2 : Ne rédige pas le document final avant d'avoir tous les détails.
-            Étape 3 : Quand tu as tout, termine impérativement par : [DOSSIER_COMPLET] suivi du résumé."""
-            
-            messages_history = [{"role": "system", "content": system_instruction}] + st.session_state.messages
-            
+            # MISE À JOUR DU MODÈLE ICI
             response = client.chat.completions.create(
-                model="llama3-8b-8192",
-                messages=messages_history
+                model="llama-3.3-70b-versatile", 
+                messages=[
+                    {"role": "system", "content": "Pose une question à la fois (entonnoir). Termine par [DOSSIER_COMPLET] quand tu as tout."},
+                    *st.session_state.messages
+                ]
             )
             ai_response = response.choices[0].message.content
             
             if "[DOSSIER_COMPLET]" in ai_response:
                 st.session_state.ready_for_payment = True
-                ai_response = ai_response.replace("[DOSSIER_COMPLET]", "✅ Informations recueillies.")
+                ai_response = ai_response.replace("[DOSSIER_COMPLET]", "")
             
             st.markdown(ai_response)
             st.session_state.messages.append({"role": "assistant", "content": ai_response})
-            
+            if st.session_state.ready_for_payment: st.rerun()
         except Exception as e:
-            st.error(f"Erreur Groq (Quota ou Clé) : {e}")
+            st.error(f"Erreur : {e}")
 
-# --- BOUTON DE PAIEMENT DYNAMIQUE ---
+# --- BOUTON PAIEMENT ---
 if st.session_state.ready_for_payment:
-    st.warning("🎯 L'IA a toutes les informations nécessaires.")
-    if st.button("💳 Payer 10€ pour générer le PDF officiel"):
-        # On envoie le dernier résumé de l'IA pour la mise en PDF
+    if st.button("💳 Générer le PDF (Mode Test)"):
         last_content = st.session_state.messages[-1]["content"]
-        try:
-            res = requests.post(f"{BACKEND_URL}/create-checkout", json={"content": last_content})
-            if res.status_code == 200:
-                st.link_button("🚀 Accéder au paiement sécurisé Stripe", res.json()['url'])
-        except:
-            st.error("Lien avec le serveur Render impossible.")
+        res = requests.post(f"{BACKEND_URL}/create-checkout", json={"content": last_content})
+        if res.status_code == 200:
+            st.link_button("Aller vers Stripe Test", res.json()['url'])
