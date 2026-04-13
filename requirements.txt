@@ -3,3 +3,4 @@ stripe
 gunicorn
 reportlab
 python-dotenv
+flask-cors
