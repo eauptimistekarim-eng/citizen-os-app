@@ -6,140 +6,83 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from groq import Groq
 
-# --- 1. CONFIGURATION & SECRETS ---
+# --- CONFIGURATION ---
 try:
-    # URL de votre backend Render (ex: https://citizen-os-backend.onrender.com)
-    BACKEND_URL = st.secrets["BACKEND_URL"].strip("/") 
-    # Votre nouvelle clé API Groq
-    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-    client = Groq(api_key=GROQ_API_KEY)
-except Exception as e:
-    st.error("Erreur de configuration : Vérifiez vos Secrets Streamlit.")
+    BACKEND_URL = st.secrets["BACKEND_URL"].strip("/")
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except Exception:
+    st.error("Erreur de configuration. Vérifiez vos secrets Streamlit.")
     st.stop()
 
-# --- 2. FONCTIONS UTILES ---
 def create_pdf(text_content):
-    """Génère un PDF à partir du résumé final de l'IA."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     text = c.beginText(50, 800)
     text.setFont("Helvetica", 10)
-    # Découpage du texte pour éviter les débordements
-    lines = text_content.split('\n')
-    for line in lines:
-        text.textLine(line[:100]) 
+    for line in text_content.split('\n'):
+        text.textLine(line[:100])
     c.drawText(text)
     c.showPage()
     c.save()
     return buffer.getvalue()
 
-def typewriter_effect(text):
-    """Affiche le texte avec un effet d'écriture progressive."""
-    placeholder = st.empty()
-    full_text = ""
-    for char in text:
-        full_text += char
-        placeholder.markdown(full_text + "▌")
-        time.sleep(0.02)
-    placeholder.markdown(full_text)
-
-# --- 3. INTERFACE UTILISATEUR ---
 st.set_page_config(page_title="CitizenOS", page_icon="⚖️")
 st.title("CitizenOS ⚖️")
 
-if "intro_done" not in st.session_state:
-    typewriter_effect("Je suis Kareem, votre expert CitizenOS. Je vais vous aider à constituer votre dossier juridique.")
-    st.session_state.intro_done = True
-
-st.divider()
-
-# --- 4. GESTION DU RETOUR DE PAIEMENT ---
-# Vérifie si l'URL contient un session_id après le paiement Stripe
+# --- RETOUR PAIEMENT ---
 if "session_id" in st.query_params:
     st.success("✅ Paiement validé !")
-    sid = st.query_params["session_id"]
     try:
-        # Récupération du contenu du document auprès du backend
-        r = requests.get(f"{BACKEND_URL}/get-doc/{sid}", timeout=10)
+        r = requests.get(f"{BACKEND_URL}/get-doc/{st.query_params['session_id']}", timeout=10)
         if r.status_code == 200:
-            content = r.json().get('content', "Votre dossier CitizenOS")
-            st.download_button(
-                label="📥 TÉLÉCHARGER MON DOSSIER (PDF)",
-                data=create_pdf(content),
-                file_name="dossier_citizenos.pdf",
-                mime="application/pdf"
-            )
-        else:
-            st.warning("Dossier en cours de préparation... rafraîchissez la page dans quelques instants.")
+            st.download_button("📥 TÉLÉCHARGER MON DOSSIER", create_pdf(r.json()['content']), "citizenos_dossier.pdf")
     except:
-        st.error("Le serveur est momentanément indisponible.")
-    st.divider()
+        st.error("Serveur en cours de réveil... Réessayez dans 10 secondes.")
 
-# --- 5. LOGIQUE DU CHAT (KAREEM) ---
+# --- CHAT KAREEM ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "ready_for_pay" not in st.session_state:
-    st.session_state.ready_for_pay = False
+    st.session_state.ready = False
 
-# Affichage des messages précédents
 for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
+    with st.chat_message(m["role"]): st.markdown(m["content"])
 
-# Entrée utilisateur
-if prompt := st.chat_input("Décrivez votre problème (SNCF, logement, amende...)"):
+if prompt := st.chat_input("Décrivez votre situation..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    with st.chat_message("user"): st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        try:
-            # Consignes strictes pour Kareem (Méthode Freeman)
-            system_prompt = """Tu es Kareem, l'IA experte de CitizenOS.
-            1. Pose UNE SEULE question précise à la fois pour construire le dossier.
-            2. Sois direct et professionnel.
-            3. Après 4 à 5 questions, résume la situation et termine EXACTEMENT par : [FIN_DE_DOSSIER]"""
+        system_msg = """Tu es Kareem de CitizenOS. Pose UNE question précise à la fois. 
+        Sois factuel. Après 4-5 questions, résume et termine par : [FIN_DE_DOSSIER]"""
+        
+        resp = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": system_msg}] + st.session_state.messages
+        )
+        txt = resp.choices[0].message.content
+        
+        # Détection flexible de la fin du dossier
+        if any(tag in txt.upper() for tag in ["FIN_DE_DOSSIER", "FINS_DE_DOSSIER", "DOSSIER PRÊT"]):
+            st.session_state.ready = True
+            txt = txt.replace("[FIN_DE_DOSSIER]", "").replace("[FINS_DE_DOSSIER]", "")
+            txt += "\n\n📌 **Dossier complété. Cliquez sur le bouton ci-dessous pour le générer.**"
+        
+        st.markdown(txt)
+        st.session_state.messages.append({"role": "assistant", "content": txt})
+        if st.session_state.ready: st.rerun()
 
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile", # Modèle à jour
-                messages=[{"role": "system", "content": system_prompt}] + st.session_state.messages
-            )
-            
-            full_response = response.choices[0].message.content
-            
-            if "[FIN_DE_DOSSIER]" in full_response:
-                st.session_state.ready_for_pay = True
-                full_response = full_response.replace("[FIN_DE_DOSSIER]", "📌 Votre dossier est prêt.")
-            
-            st.markdown(full_response)
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
-            if st.session_state.ready_for_pay:
-                st.rerun() # Pour faire apparaître le bouton de paiement immédiatement
-
-        except Exception as e:
-            st.error(f"Erreur de communication avec l'IA : {e}")
-
-# --- 6. BOUTON DE PAIEMENT ---
-if st.session_state.ready_for_pay:
+# --- BOUTON STRIPE ---
+if st.session_state.ready:
     st.divider()
-    st.subheader("Finaliser mon document")
     if st.button("💳 PAYER ET GÉNÉRER LE PDF (10€)", use_container_width=True):
-        with st.spinner("Connexion à Stripe..."):
-            try:
-                # Envoi du contenu final au backend pour Stripe
-                last_summary = st.session_state.messages[-1]["content"]
-                res = requests.post(
-                    f"{BACKEND_URL}/create-checkout",
-                    json={"content": last_summary},
-                    timeout=15
-                )
-                
-                if res.status_code == 200:
-                    stripe_url = res.json().get('url')
-                    st.link_button("👉 CLIQUER ICI POUR PAYER", stripe_url, type="primary")
-                else:
-                    # Message d'erreur si le domaine n'est pas autorisé dans Stripe
-                    st.error("Erreur Backend : Vérifiez que l'URL Streamlit est autorisée dans Stripe.")
-            except Exception as e:
-                st.error("Le serveur Render met trop de temps à répondre. Réessayez dans 20 secondes.")
+        try:
+            # Envoi du résumé au backend Render
+            res = requests.post(f"{BACKEND_URL}/create-checkout", 
+                                json={"content": st.session_state.messages[-1]["content"]}, 
+                                timeout=15)
+            if res.status_code == 200:
+                st.link_button("👉 CLIQUEZ ICI POUR RÉGLER", res.json()['url'], type="primary")
+            else:
+                st.error("Le domaine 'citizen-os-app.streamlit.app' n'est pas encore validé dans Stripe.")
+        except:
+            st.error("Le backend Render est en veille. Veuillez patienter 30 secondes.")
