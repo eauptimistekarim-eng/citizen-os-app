@@ -6,55 +6,57 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# Config
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
-STREAMLIT_URL = os.environ.get("STREAMLIT_URL") # Ex: https://votreapp.streamlit.app
+WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+STREAMLIT_URL = os.environ.get("STREAMLIT_URL")
 
-# Cache mémoire (Stateless : vidé à chaque reboot Render)
-# C'est suffisant pour le laps de temps d'un paiement (2-3 min)
-storage_cache = {}
+# Stockage temporaire en mémoire
+doc_storage = {}
 
-@app.route('/create-checkout-session', methods=['POST'])
-def create_session():
+@app.route('/create-checkout', methods=['POST'])
+def create_checkout():
     try:
         data = request.json
-        full_content = data.get("content", "")
+        content = data.get('content', '')
         
         session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[{
                 'price_data': {
                     'currency': 'eur',
-                    'product_data': {'name': 'Génération Document CitizenOS'},
+                    'product_data': {'name': 'Document Officiel CitizenOS'},
                     'unit_amount': 1000,
                 },
                 'quantity': 1,
             }],
             mode='payment',
-            success_url=f"{STREAMLIT_URL}?status=success&session_id={{CHECKOUT_SESSION_ID}}",
+            success_url=f"{STREAMLIT_URL}?session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=STREAMLIT_URL,
-            metadata={"check": "valid"} 
         )
         
-        # On stocke le texte avec l'ID de session comme clé
-        storage_cache[session.id] = full_content
-        return jsonify({"url": session.url})
+        # On indexe le contenu par l'ID de session pour le retrouver au retour
+        doc_storage[session.id] = content
+        return jsonify({'url': session.url})
     except Exception as e:
         return jsonify(error=str(e)), 500
 
-@app.route('/get_content/<session_id>', methods=['GET'])
-def get_content(session_id):
-    # L'app Streamlit récupère le texte ici après le succès
-    content = storage_cache.get(session_id)
+@app.route('/get-doc/<session_id>', methods=['GET'])
+def get_doc(session_id):
+    content = doc_storage.get(session_id)
     if content:
-        # Nettoyage optionnel du cache après récupération pour libérer la RAM
-        # doc = storage_cache.pop(session_id) 
-        return jsonify({"content": content})
-    return jsonify(error="Document non trouvé ou expiré"), 404
+        return jsonify({'content': content})
+    
+    # Fallback si le serveur a redémarré : on tente de récupérer via l'API Stripe
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+        # Si vous aviez mis un résumé en metadata
+        return jsonify({'content': "Document récupéré. (Contenu original expiré du cache)"})
+    except:
+        return jsonify(error="file_not_ready"), 404
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    # Gardé pour la conformité Stripe, mais la logique principale est au-dessus
+    # Optionnel pour loguer les ventes
     return jsonify(success=True), 200
 
 if __name__ == '__main__':
