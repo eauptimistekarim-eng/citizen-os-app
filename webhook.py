@@ -6,11 +6,11 @@ import os
 app = Flask(__name__)
 CORS(app)
 
+# Configuration via Variables d'Environnement Render
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
-WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 STREAMLIT_URL = os.environ.get("STREAMLIT_URL")
 
-# Stockage temporaire en mémoire
+# Stockage temporaire en mémoire vive
 doc_storage = {}
 
 @app.route('/create-checkout', methods=['POST'])
@@ -34,7 +34,6 @@ def create_checkout():
             cancel_url=STREAMLIT_URL,
         )
         
-        # On indexe le contenu par l'ID de session pour le retrouver au retour
         doc_storage[session.id] = content
         return jsonify({'url': session.url})
     except Exception as e:
@@ -45,19 +44,13 @@ def get_doc(session_id):
     content = doc_storage.get(session_id)
     if content:
         return jsonify({'content': content})
-    
-    # Fallback si le serveur a redémarré : on tente de récupérer via l'API Stripe
-    try:
-        session = stripe.checkout.Session.retrieve(session_id)
-        # Si vous aviez mis un résumé en metadata
-        return jsonify({'content': "Document récupéré. (Contenu original expiré du cache)"})
-    except:
-        return jsonify(error="file_not_ready"), 404
+    return jsonify(error="file_not_ready"), 404
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    # Optionnel pour loguer les ventes
-    return jsonify(success=True), 200
+@app.route('/health', methods=['GET'])
+def health():
+    return "OK", 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
+    # TRÈS IMPORTANT : Render impose le port via la variable d'env PORT
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
