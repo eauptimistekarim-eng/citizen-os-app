@@ -5,7 +5,8 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from groq import Groq
 
-# Config
+# --- CONFIGURATION ---
+# Assurez-vous que ces noms correspondent EXACTEMENT à vos secrets Streamlit
 BACKEND_URL = st.secrets["BACKEND_URL"]
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
@@ -21,6 +22,7 @@ def create_pdf(text_content):
     c.save()
     return buffer.getvalue()
 
+st.set_page_config(page_title="CitizenOS", page_icon="⚖️")
 st.title("CitizenOS ⚖️")
 
 # --- INITIALISATION ---
@@ -29,15 +31,24 @@ if "messages" not in st.session_state:
 if "ready_for_payment" not in st.session_state:
     st.session_state.ready_for_payment = False
 
-# --- GESTION DU RETOUR STRIPE ---
+# --- GESTION DU RETOUR DE PAIEMENT ---
 params = st.query_params
 if "session_id" in params:
-    st.success("✅ Paiement validé !")
-    with st.spinner("Récupération du document final..."):
+    st.success("✅ Paiement confirmé ! Préparation de votre document...")
+    try:
         r = requests.get(f"{BACKEND_URL}/get-doc/{params['session_id']}")
         if r.status_code == 200:
             pdf_bytes = create_pdf(r.json()['content'])
-            st.download_button("📥 Télécharger mon PDF Officiel", pdf_bytes, "document.pdf", "application/pdf")
+            st.download_button(
+                label="📥 Télécharger mon document officiel (PDF)",
+                data=pdf_bytes,
+                file_name="document_citizenos.pdf",
+                mime="application/pdf"
+            )
+        else:
+            st.error("Erreur : Document introuvable. Veuillez réessayer.")
+    except Exception as e:
+        st.error(f"Erreur de connexion au backend : {e}")
     st.divider()
 
 # --- AFFICHAGE DU CHAT ---
@@ -45,44 +56,47 @@ for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-# --- LOGIQUE CHAT IA ---
+# --- LOGIQUE CHAT IA (ENTONNOIR) ---
 if prompt := st.chat_input("Répondez ici..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"): st.markdown(prompt)
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        # Prompt Système pour forcer l'entonnoir
-        system_prompt = """Tu es un expert juridique CitizenOS. Ta mission est d'aider l'utilisateur à rédiger un document.
-        CONSIGNE : Ne rédige pas le document tout de suite. Pose des questions précises une par une (méthode de l'entonnoir) pour obtenir tous les détails nécessaires.
-        Dès que tu as assez d'infos, termine obligatoirement ton message par le mot-clé : [DOCUMENT_PRET] suivi du résumé complet du document."""
+        # Le prompt système force l'IA à poser des questions d'abord
+        system_prompt = """Tu es l'assistant juridique de CitizenOS. 
+        TON BUT : Aider l'utilisateur à constituer un dossier ou une lettre.
+        MÉTHODE : Ne rédige pas le document final immédiatement. Pose des questions précises, une par une, pour comprendre le litige ou la demande (entonnoir).
+        QUAND TU AS TOUT : Une fois que tu as assez d'infos, résume la situation et termine impérativement ton message par le code : [PRET_POUR_CERTIFICATION]"""
         
-        full_history = [{"role": "system", "content": system_prompt}] + st.session_state.messages
+        history = [{"role": "system", "content": system_prompt}] + st.session_state.messages
         
         response = client.chat.completions.create(
             model="llama3-8b-8192",
-            messages=full_history
+            messages=history
         )
         ai_text = response.choices[0].message.content
         
-        # Vérification si le document est prêt
-        if "[DOCUMENT_PRET]" in ai_text:
+        if "[PRET_POUR_CERTIFICATION]" in ai_text:
             st.session_state.ready_for_payment = True
-            clean_text = ai_text.replace("[DOCUMENT_PRET]", "")
-            st.markdown(clean_text)
-            st.session_state.messages.append({"role": "assistant", "content": clean_text})
+            display_text = ai_text.replace("[PRET_POUR_CERTIFICATION]", "✅ Dossier complet.")
+            st.markdown(display_text)
+            st.session_state.messages.append({"role": "assistant", "content": display_text})
         else:
             st.markdown(ai_text)
             st.session_state.messages.append({"role": "assistant", "content": ai_text})
 
-# --- BOUTON DE PAIEMENT DYNAMIQUE ---
+# --- BOUTON DE PAIEMENT ---
 if st.session_state.ready_for_payment:
-    st.warning("🎯 Toutes les informations sont réunies. Vous pouvez maintenant générer votre document officiel.")
-    if st.button("💳 Payer 10€ et télécharger le PDF"):
-        # On envoie le dernier résumé de l'IA au backend
-        last_ai_msg = st.session_state.messages[-1]["content"]
+    st.info("🎯 Votre document est prêt à être généré.")
+    if st.button("💳 Payer 10€ et générer le PDF"):
+        # On envoie le contenu du dernier message de l'IA pour le PDF
+        content_to_save = st.session_state.messages[-1]["content"]
         try:
-            r = requests.post(f"{BACKEND_URL}/create-checkout", json={"content": last_ai_msg})
+            r = requests.post(f"{BACKEND_URL}/create-checkout", json={"content": content_to_save})
             if r.status_code == 200:
-                st.link_button("🚀 Accéder au paiement sécurisé", r.json()['url'])
+                st.link_button("🚀 Aller vers le paiement sécurisé", r.json()['url'])
+            else:
+                st.error("Erreur lors de la création de la session de paiement.")
         except:
-            st.error("Lien avec le serveur Stripe impossible.")
+            st.error("Backend injoignable.")
