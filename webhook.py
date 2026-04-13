@@ -1,125 +1,75 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 import stripe
 import os
-import io
-from reportlab.pdfgen import canvas
 
 app = Flask(__name__)
 
-# =====================
-# CONFIG
-# =====================
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+# Configuration
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
-FRONTEND_URL = "https://citizen-os-app.streamlit.app"
+# Stockage temporaire (Attention: Render reset ce dict au restart)
+# Solution sans DB : On utilise la durée de vie du processus pour le transit
+temp_storage = {}
 
-# =====================
-# HOME
-# =====================
-@app.route("/")
-def home():
-    return jsonify({"status": "CitizenOS backend OK"})
-
-# =====================
-# CREATE CHECKOUT
-# =====================
-@app.route("/create-checkout-session", methods=["POST"])
-def create_checkout():
-
+@app.route('/create-checkout-session', methods=['POST'])
+def create_session():
     try:
-        data = request.json or {}
-        summary = data.get("summary", "")
-
-        session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            mode="payment",
-
+        data = request.json
+        content = data.get("content", "")
+        
+        # On limite pour la sécurité mais on garde le gros du texte ici
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
             line_items=[{
-                "price_data": {
-                    "currency": "eur",
-                    "product_data": {
-                        "name": "CitizenOS - Lettre administrative IA"
-                    },
-                    "unit_amount": 900
+                'price_data': {
+                    'currency': 'eur',
+                    'product_data': {'name': 'Document CitizenOS'},
+                    'unit_amount': 1000,
                 },
-                "quantity": 1
+                'quantity': 1,
             }],
-
-            success_url=f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{FRONTEND_URL}?cancel=true",
-
-            metadata={
-                "summary": summary[:500]
-            }
+            mode='payment',
+            success_url=os.environ.get("STREAMLIT_URL") + "?status=success&session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=os.environ.get("STREAMLIT_URL"),
+            # On ne stocke que les 100 premiers caractères en metadata par sécurité
+            metadata={"summary": content[:100]} 
         )
-
-        return jsonify({"url": session.url})
-
+        
+        # Stockage du contenu lié au session_id
+        temp_storage[checkout_session.id] = content
+        return jsonify({"url": checkout_session.url})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify(error=str(e)), 500
 
-# =====================
-# PDF GENERATOR (NO STORAGE)
-# =====================
-def generate_pdf(text):
-
-    buffer = io.BytesIO()
-    pdf = canvas.Canvas(buffer)
-
-    pdf.setFont("Helvetica-Bold", 14)
-    pdf.drawString(50, 800, "CITIZENOS - LETTRE ADMINISTRATIVE")
-
-    pdf.setFont("Helvetica", 11)
-
-    y = 760
-    pdf.drawString(50, y, "SITUATION :")
-    y -= 20
-
-    for line in str(text)[:1200].split("\n"):
-        pdf.drawString(50, y, line[:90])
-        y -= 15
-        if y < 50:
-            break
-
-    y -= 20
-    pdf.drawString(50, y, "LETTRE :")
-    y -= 20
-    pdf.drawString(50, y, "Madame, Monsieur,")
-    y -= 20
-    pdf.drawString(50, y, "Je sollicite le traitement de ma situation administrative.")
-    y -= 20
-    pdf.drawString(50, y, "Veuillez agréer, mes salutations distinguées.")
-
-    pdf.save()
-    buffer.seek(0)
-
-    return buffer
-
-# =====================
-# DOWNLOAD (FIX DEFINITIF)
-# =====================
-@app.route("/download/<session_id>")
-def download(session_id):
-
+@app.route('/get_content/<session_id>', methods=['GET'])
+def get_content(session_id):
+    # L'app Streamlit vient chercher le texte ici
+    content = temp_storage.get(session_id)
+    if content:
+        return jsonify({"content": content})
+    
+    # Fallback : Si Render a reboot, on tente de récupérer le summary Stripe
     try:
         session = stripe.checkout.Session.retrieve(session_id)
-        summary = session.get("metadata", {}).get("summary", "")
+        return jsonify({"content": session.metadata.get("summary", "Contenu expiré.")})
+    except:
+        return jsonify(error="Not found"), 404
 
-        pdf = generate_pdf(summary)
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    payload = request.data
+    sig_header = request.headers.get('Stripe-Signature')
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, WEBHOOK_SECRET)
+    except:
+        return jsonify(success=False), 400
 
-        return send_file(
-            pdf,
-            as_attachment=True,
-            download_name="citizenos_lettre.pdf",
-            mimetype="application/pdf"
-        )
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        print(f"Paiement réussi pour session {session.id}")
+        
+    return jsonify(success=True)
 
-    except Exception as e:
-        return jsonify({
-            "error": "download_failed",
-            "message": str(e)
-        }), 400
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
