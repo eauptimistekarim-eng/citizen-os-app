@@ -7,9 +7,10 @@ from reportlab.lib.pagesizes import A4
 from groq import Groq
 
 # --- 1. CONFIGURATION & SECRETS ---
-# Assure-toi que ces clés sont bien dans tes secrets Streamlit
 try:
-    BACKEND_URL = st.secrets["BACKEND_URL"].strip("/")
+    # URL de votre backend Render (ex: https://citizen-os-backend.onrender.com)
+    BACKEND_URL = st.secrets["BACKEND_URL"].strip("/") 
+    # Votre nouvelle clé API Groq
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
     client = Groq(api_key=GROQ_API_KEY)
 except Exception as e:
@@ -18,12 +19,12 @@ except Exception as e:
 
 # --- 2. FONCTIONS UTILES ---
 def create_pdf(text_content):
-    """Génère un PDF simple à partir du texte de l'IA."""
+    """Génère un PDF à partir du résumé final de l'IA."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     text = c.beginText(50, 800)
     text.setFont("Helvetica", 10)
-    # Découpage du texte pour éviter qu'il ne dépasse du PDF
+    # Découpage du texte pour éviter les débordements
     lines = text_content.split('\n')
     for line in lines:
         text.textLine(line[:100]) 
@@ -33,7 +34,7 @@ def create_pdf(text_content):
     return buffer.getvalue()
 
 def typewriter_effect(text):
-    """Effet d'écriture pour l'introduction."""
+    """Affiche le texte avec un effet d'écriture progressive."""
     placeholder = st.empty()
     full_text = ""
     for char in text:
@@ -43,38 +44,35 @@ def typewriter_effect(text):
     placeholder.markdown(full_text)
 
 # --- 3. INTERFACE UTILISATEUR ---
-st.set_page_config(page_title="CitizenOS", page_icon="⚖️", layout="centered")
+st.set_page_config(page_title="CitizenOS", page_icon="⚖️")
 st.title("CitizenOS ⚖️")
 
 if "intro_done" not in st.session_state:
-    typewriter_effect("Je suis Kareem, votre expert CitizenOS. Décrivez-moi votre situation pour constituer votre dossier juridique.")
+    typewriter_effect("Je suis Kareem, votre expert CitizenOS. Je vais vous aider à constituer votre dossier juridique.")
     st.session_state.intro_done = True
-else:
-    st.markdown("*Kareem est à votre écoute pour vos recours et dossiers officiels.*")
 
 st.divider()
 
 # --- 4. GESTION DU RETOUR DE PAIEMENT ---
+# Vérifie si l'URL contient un session_id après le paiement Stripe
 if "session_id" in st.query_params:
-    st.success("✅ Paiement validé avec succès !")
+    st.success("✅ Paiement validé !")
     sid = st.query_params["session_id"]
-    with st.status("Récupération de votre dossier...", expanded=True) as status:
-        try:
-            r = requests.get(f"{BACKEND_URL}/get-doc/{sid}", timeout=10)
-            if r.status_code == 200:
-                content = r.json().get('content', "Dossier CitizenOS")
-                pdf_bytes = create_pdf(content)
-                st.download_button(
-                    label="📥 TÉLÉCHARGER MON DOSSIER (PDF)",
-                    data=pdf_bytes,
-                    file_name="dossier_citizenos.pdf",
-                    mime="application/pdf"
-                )
-                status.update(label="Dossier prêt !", state="complete")
-            else:
-                st.warning("Le document est encore en cours de traitement... Rafraîchissez la page.")
-        except:
-            st.error("Connexion au serveur interrompue. Veuillez patienter.")
+    try:
+        # Récupération du contenu du document auprès du backend
+        r = requests.get(f"{BACKEND_URL}/get-doc/{sid}", timeout=10)
+        if r.status_code == 200:
+            content = r.json().get('content', "Votre dossier CitizenOS")
+            st.download_button(
+                label="📥 TÉLÉCHARGER MON DOSSIER (PDF)",
+                data=create_pdf(content),
+                file_name="dossier_citizenos.pdf",
+                mime="application/pdf"
+            )
+        else:
+            st.warning("Dossier en cours de préparation... rafraîchissez la page dans quelques instants.")
+    except:
+        st.error("Le serveur est momentanément indisponible.")
     st.divider()
 
 # --- 5. LOGIQUE DU CHAT (KAREEM) ---
@@ -83,29 +81,27 @@ if "messages" not in st.session_state:
 if "ready_for_pay" not in st.session_state:
     st.session_state.ready_for_pay = False
 
-# Affichage de l'historique
+# Affichage des messages précédents
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
 # Entrée utilisateur
-if prompt := st.chat_input("Ex: Problème de logement, amende SNCF..."):
+if prompt := st.chat_input("Décrivez votre problème (SNCF, logement, amende...)"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
         try:
-            # Système de questions en entonnoir (Freeman Method)
-            system_prompt = """Tu es Kareem, l'IA experte de CitizenOS. 
-            Ton but est de collecter les informations pour un dossier juridique officiel.
-            1. Pose UNE SEULE question précise à la fois.
-            2. Ne fais pas de politesses inutiles, sois factuel et professionnel.
-            3. Tu dois poser environ 4 à 5 questions pour bien comprendre le litige.
-            4. Quand tu as toutes les informations, fais un résumé structuré et termine EXACTEMENT par le code : [FIN_DE_DOSSIER]"""
+            # Consignes strictes pour Kareem (Méthode Freeman)
+            system_prompt = """Tu es Kareem, l'IA experte de CitizenOS.
+            1. Pose UNE SEULE question précise à la fois pour construire le dossier.
+            2. Sois direct et professionnel.
+            3. Après 4 à 5 questions, résume la situation et termine EXACTEMENT par : [FIN_DE_DOSSIER]"""
 
             response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.3-70b-versatile", # Modèle à jour
                 messages=[{"role": "system", "content": system_prompt}] + st.session_state.messages
             )
             
@@ -113,41 +109,37 @@ if prompt := st.chat_input("Ex: Problème de logement, amende SNCF..."):
             
             if "[FIN_DE_DOSSIER]" in full_response:
                 st.session_state.ready_for_pay = True
-                full_response = full_response.replace("[FIN_DE_DOSSIER]", "")
-                st.markdown(full_response)
-                st.info("🎯 **Analyse terminée. Votre dossier est prêt à être généré.**")
-            else:
-                st.markdown(full_response)
+                full_response = full_response.replace("[FIN_DE_DOSSIER]", "📌 Votre dossier est prêt.")
             
+            st.markdown(full_response)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             
-            # Forcer le rafraîchissement pour afficher le bouton de paiement
             if st.session_state.ready_for_pay:
-                st.rerun()
+                st.rerun() # Pour faire apparaître le bouton de paiement immédiatement
 
         except Exception as e:
-            st.error(f"Erreur technique : {e}")
+            st.error(f"Erreur de communication avec l'IA : {e}")
 
-# --- 6. BOUTON DE PAIEMENT STRIPE ---
+# --- 6. BOUTON DE PAIEMENT ---
 if st.session_state.ready_for_pay:
     st.divider()
     st.subheader("Finaliser mon document")
     if st.button("💳 PAYER ET GÉNÉRER LE PDF (10€)", use_container_width=True):
-        with st.spinner("Connexion sécurisée à Stripe..."):
+        with st.spinner("Connexion à Stripe..."):
             try:
-                # On envoie le dernier résumé de Kareem au backend Render
-                last_ai_message = st.session_state.messages[-1]["content"]
-                
+                # Envoi du contenu final au backend pour Stripe
+                last_summary = st.session_state.messages[-1]["content"]
                 res = requests.post(
                     f"{BACKEND_URL}/create-checkout",
-                    json={"content": last_ai_message},
+                    json={"content": last_summary},
                     timeout=15
                 )
                 
                 if res.status_code == 200:
-                    checkout_url = res.json().get('url')
-                    st.link_button("👉 CLIQUER ICI POUR RÉGLER", checkout_url, type="primary")
+                    stripe_url = res.json().get('url')
+                    st.link_button("👉 CLIQUER ICI POUR PAYER", stripe_url, type="primary")
                 else:
-                    st.error("Erreur Backend : Vérifiez que l'URL Streamlit est autorisée dans votre Dashboard Stripe.")
+                    # Message d'erreur si le domaine n'est pas autorisé dans Stripe
+                    st.error("Erreur Backend : Vérifiez que l'URL Streamlit est autorisée dans Stripe.")
             except Exception as e:
-                st.error("Le serveur Render est en veille (Sleep mode). Veuillez patienter 30 secondes et cliquer à nouveau.")
+                st.error("Le serveur Render met trop de temps à répondre. Réessayez dans 20 secondes.")
